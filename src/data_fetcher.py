@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 _MARKET_CHART_URL = "https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
 _MARKET_LIST_URL = "https://api.coingecko.com/api/v3/coins/markets"
+_MARKET_GLOBAL_URL = "https://api.coingecko.com/api/v3/global"
+_MARKET_TRENDING_URL = "https://api.coingecko.com/api/v3/search/trending"
+_FEAR_AND_GREED_URL = "https://api.alternative.me/fng/"
 _REQUEST_TIMEOUT = (5, 30)
 _MAX_RATE_LIMIT_RETRIES = 2
 _MAX_RETRY_DELAY_SECONDS = 30
@@ -42,6 +45,106 @@ _FALLBACK_TOP_COINS = [
 	{"id": "uniswap", "symbol": "UNI", "name": "Uniswap"},
 	{"id": "litecoin", "symbol": "LTC", "name": "Litecoin"},
 ]
+
+
+@st.cache_data(ttl=900)
+def get_market_insights() -> dict[str, int | float | str | None]:
+	"""Fetch cached market sentiment, global market metrics, and the trending coin."""
+	insights: dict[str, int | float | str | None] = {
+		"fear_greed_value": None,
+		"fear_greed_classification": None,
+		"btc_dominance": None,
+		"market_cap_change_24h": None,
+		"trending_coin": None,
+		"trending_symbol": None,
+	}
+	headers = {
+		"Accept": "application/json",
+		"User-Agent": "Crypto-Correlation-Risk-Radar/1.0",
+	}
+
+	try:
+		response = requests.get(
+			_FEAR_AND_GREED_URL,
+			params={"limit": 1},
+			timeout=_REQUEST_TIMEOUT,
+			headers=headers,
+		)
+		response.raise_for_status()
+		payload = response.json()
+		records = payload.get("data") if isinstance(payload, dict) else None
+		if isinstance(records, list) and records and isinstance(records[0], dict):
+			record = records[0]
+			try:
+				value = int(record["value"])
+			except (KeyError, TypeError, ValueError):
+				logger.warning("Alternative.me returned an invalid Fear and Greed value")
+			else:
+				if 0 <= value <= 100:
+					insights["fear_greed_value"] = value
+					classification = record.get("value_classification")
+					if isinstance(classification, str):
+						insights["fear_greed_classification"] = classification
+	except (requests.exceptions.RequestException, ValueError, TypeError) as error:
+		logger.warning("Failed to fetch the Fear and Greed Index: %s", error)
+
+	try:
+		response = requests.get(
+			_MARKET_GLOBAL_URL,
+			timeout=_REQUEST_TIMEOUT,
+			headers=headers,
+		)
+		response.raise_for_status()
+		payload = response.json()
+		global_data = payload.get("data") if isinstance(payload, dict) else None
+		if isinstance(global_data, dict):
+			market_cap_percentages = global_data.get("market_cap_percentage")
+			if isinstance(market_cap_percentages, dict):
+				try:
+					btc_dominance = float(market_cap_percentages["btc"])
+				except (KeyError, TypeError, ValueError):
+					logger.warning("CoinGecko returned invalid BTC dominance data")
+				else:
+					if isfinite(btc_dominance) and 0 <= btc_dominance <= 100:
+						insights["btc_dominance"] = btc_dominance
+			try:
+				market_cap_change = float(
+					global_data["market_cap_change_percentage_24h_usd"]
+				)
+			except (KeyError, TypeError, ValueError):
+				logger.warning("CoinGecko returned invalid 24-hour market cap change data")
+			else:
+				if isfinite(market_cap_change):
+					insights["market_cap_change_24h"] = market_cap_change
+	except (requests.exceptions.RequestException, ValueError, TypeError) as error:
+		logger.warning("Failed to fetch CoinGecko global market data: %s", error)
+
+	try:
+		response = requests.get(
+			_MARKET_TRENDING_URL,
+			timeout=_REQUEST_TIMEOUT,
+			headers=headers,
+		)
+		response.raise_for_status()
+		payload = response.json()
+		trending_coins = payload.get("coins") if isinstance(payload, dict) else None
+		if (
+			isinstance(trending_coins, list)
+			and trending_coins
+			and isinstance(trending_coins[0], dict)
+		):
+			first_coin = trending_coins[0].get("item")
+			if isinstance(first_coin, dict):
+				name = first_coin.get("name")
+				symbol = first_coin.get("symbol")
+				if isinstance(name, str):
+					insights["trending_coin"] = name
+				if isinstance(symbol, str):
+					insights["trending_symbol"] = symbol.upper()
+	except (requests.exceptions.RequestException, ValueError, TypeError) as error:
+		logger.warning("Failed to fetch CoinGecko trending coins: %s", error)
+
+	return insights
 
 
 def _rate_limit_delay(response: requests.Response, attempt: int) -> float:

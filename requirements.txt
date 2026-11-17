@@ -5,3 +5,4 @@ plotly
 requests
 python-dotenv
 groq
+Pillow

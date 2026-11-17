@@ -1,6 +1,7 @@
 from math import cos, pi, sin
 
 import plotly.graph_objects as go
+import pandas as pd
 import streamlit as st
 
 from src.correlation import calculate_correlation_matrix, get_top_correlations
@@ -89,7 +90,7 @@ def _build_network_figure(
 def render_analysis(
 	selected_coins: list[str],
 	coin_symbols: dict[str, str] | None = None,
-) -> tuple[list[dict[str, str | float]], float | None] | None:
+) -> tuple[list[dict[str, str | float]], float | None, pd.DataFrame] | None:
 	"""Render market correlations and return the highest correlated pairs.
 
 	Args:
@@ -97,9 +98,9 @@ def render_analysis(
 		coin_symbols: Mapping of CoinGecko IDs to display symbols.
 
 	Returns:
-		The top three correlation pairs and bounded risk score, or ``None`` if
-		price analysis fails. The score is ``None`` when no off-diagonal
-		correlations are available.
+		The top three correlation pairs, bounded risk score, and correlation
+		matrix, or ``None`` if price analysis fails. The score is ``None`` when
+		no off-diagonal correlations are available.
 	"""
 	try:
 		with st.spinner("Fetching market history and calculating correlations..."):
@@ -202,7 +203,7 @@ def render_analysis(
 			risk_score = min(10.0, max(0.0, round(avg_corr * 10, 1)))
 		else:
 			risk_score = None
-		return top_correlations, risk_score
+		return top_correlations, risk_score, corr_matrix
 	except Exception as error:
 		st.error(f"Analysis failed. Please try again. Details: {error}")
 		return None
